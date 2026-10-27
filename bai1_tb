@@ -1,0 +1,68 @@
+
+module sync_fifo #(
+    parameter int DATA_WIDTH = 8,
+    parameter int DEPTH      = 8
+) (
+    input  logic                          clk,
+    input  logic                          rst_n,
+    input  logic                          wr_en,
+    input  logic [DATA_WIDTH-1:0]         wr_data,
+    input  logic                          rd_en,
+    output logic [DATA_WIDTH-1:0]         rd_data,
+    output logic                          rd_valid,
+    output logic                          full,
+    output logic                          empty,
+    output logic [$clog2(DEPTH+1)-1:0]    count
+);
+ 
+    localparam int PTR_W = (DEPTH > 1) ? $clog2(DEPTH) : 1;
+ 
+    logic [DATA_WIDTH-1:0] mem [0:DEPTH-1];
+    logic [PTR_W-1:0]      wr_ptr, rd_ptr;
+ 
+    // Thao tác hợp lệ, dựa trên full/empty trước cạnh clock
+    logic do_wr, do_rd;
+    assign do_wr = wr_en && !full;
+    assign do_rd = rd_en && !empty;
+ 
+    // Cờ trạng thái suy ra từ count (trạng thái đã đăng ký)
+    assign full  = (count == DEPTH);
+    assign empty = (count == 0);
+ 
+    // Tăng con trỏ có quay vòng (đúng với mọi DEPTH, không chỉ lũy thừa của 2)
+    function automatic logic [PTR_W-1:0] ptr_inc(input logic [PTR_W-1:0] p);
+        if (p == PTR_W'(DEPTH-1)) return '0;
+        else                      return p + 1'b1;
+    endfunction
+ 
+    // Con trỏ, count, rd_valid, rd_data
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            wr_ptr   <= '0;
+            rd_ptr   <= '0;
+            count    <= '0;
+            rd_valid <= 1'b0;
+            rd_data  <= '0;
+        end else begin
+            rd_valid <= do_rd;
+ 
+            if (do_wr) wr_ptr <= ptr_inc(wr_ptr);
+            if (do_rd) begin
+                rd_ptr  <= ptr_inc(rd_ptr);
+                rd_data <= mem[rd_ptr];     // phần tử cũ nhất
+            end
+ 
+            case ({do_wr, do_rd})
+                2'b10:   count <= count + 1'b1;
+                2'b01:   count <= count - 1'b1;
+                default: count <= count;     // không thao tác, hoặc đồng thời ghi + đọc
+            endcase
+        end
+    end
+ 
+    // Ghi bộ nhớ (không cần reset; nội dung được xác định bởi count)
+    always_ff @(posedge clk) begin
+        if (do_wr) mem[wr_ptr] <= wr_data;
+    end
+ 
+endmodule
